@@ -1,6 +1,6 @@
 String version = "1.0";
 
-// Source code - Technik Gesellenstück 2021/22 | Dennis
+// Source code - Technik Gesellenstück 2021/22
 
 // The LEDs I bought are: https://amzn.to/3iY2oXx
 // The LCD I bought is: https://amzn.to/3AEbbUj
