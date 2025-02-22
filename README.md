@@ -1,7 +1,7 @@
 # Juky
 
-<img align="right" src="preview.gif" width="30%" style="margin-left: 1rem">
-<img align="left" src="settings.gif" width="30%" style="margin-right: 1rem">
+<img align="right" src="preview.gif" width="30%" style="padding-left: 1rem">
+<img align="left" src="settings.gif" width="30%" style="padding-right: 1rem">
 
 
 
