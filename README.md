@@ -1,10 +1,5 @@
 # Juky
 
-<img align="right" src="preview.gif" width="30%" style="padding-left: 1rem">
-<img align="left" src="settings.gif" width="30%" style="padding-right: 1rem">
-
-
-
 An audio visualizer I started in 2021 for a school project that never
 got finished due to Covid. Since I promised my teacher that I'll eventually
 finish it, I basically restarted it from scratch.
@@ -21,3 +16,6 @@ text to the display takes really long), I added a text buffer that
 gets sent over time. It may take a moment before changes appear.
 
 <hr>
+
+<img align="left" src="preview.gif" width="35%" style="padding-left: 1rem">
+<img align="right" src="settings.gif" width="60%" style="padding-right: 1rem">
