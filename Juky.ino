@@ -1,57 +1,44 @@
-String version = "1.0";
+#define version "2.0"
 
 // Source code - Technik Gesellenstück 2021/22
+// 2025 Rewrite
 
-// The LEDs I bought are: https://amzn.to/3iY2oXx
-// The LCD I bought is: https://amzn.to/3AEbbUj
+// The LEDs: https://amzn.to/3iY2oXx
+// The LCD: https://amzn.to/3AEbbUj
 
 // Libraries
-#include <FastLED.h>
-#include <TimerOne.h>
 #include <BasicEncoder.h>
-#include "Waveshare_LCD1602_RGB.h"
+#include <FastLED.h>
+#include <MSGEQ7.h>
+#include <TimerOne.h>
+#include <Waveshare_LCD1602_RGB.h>  // Included in the repo as a .zip
 
 // Adressable LEDs
-#define LED_PIN     5
-#define NUM_LEDS    60
-#define LED_TYPE    WS2812B
+#define LED_PIN 5
+#define NUM_LEDS 60
+#define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
 
-// Normal LEDs
-#define LED_red     9
-#define LED_green   10
-#define LED_blue    11
-// The LEDs are on when LOW and off when HIGH.
-// This allows me to not use resistors since I can use the Arduino's 3.3V.
-
-// Grid
-#define grid_x      6
-#define grid_y      10
-
-// RGB LCD
-#define LCD_length  16
-#define LCD_height  2
-
-// Rotary Encoder
-BasicEncoder encoder(12, 13);
-void timer_service() {
-  encoder.service();
-}
-
-// Adressable LEDs
 CRGB leds[NUM_LEDS];
-CRGB current_color;
+
+// Display grid
+#define grid_x 6
+#define grid_y 10
+#define FPS 50
+#define targetMillis (1000 / FPS)
 
 // LCD
+#define LCD_length 16
+#define LCD_height 2
+
 Waveshare_LCD1602_RGB lcd(LCD_length, LCD_height);
 
 // MSGEQ7
-#include "MSGEQ7.h"
 #define pinAnalog A0
 #define pinReset 3
 #define pinStrobe 2
-#define MSGEQ7_INTERVAL ReadsPerSecond(50)
-#define MSGEQ7_SMOOTH true
+#define MSGEQ7_INTERVAL ReadsPerSecond(FPS)
+#define MSGEQ7_SMOOTH min(255, FPS * 2)
 
 CMSGEQ7<MSGEQ7_SMOOTH, pinReset, pinStrobe, pinAnalog> MSGEQ7;
 
@@ -59,479 +46,413 @@ CMSGEQ7<MSGEQ7_SMOOTH, pinReset, pinStrobe, pinAnalog> MSGEQ7;
 #define pinSW 8
 #define pinCLK 13
 #define pinDT 12
+BasicEncoder encoder(12, 13);
+void timer_service() { encoder.service(); }
 
-// ------------------------------------------------------------------------------------------ //
+// -- VARIABLES -- //
 
-// Setup function, executed on start
+// LCD vars
+String lcdBuffer = "";
+byte cursor = 0;
+const char* lines[9] = {
+    "o O o O o O o O ", "*-*-*-*-*-*-*-* ", "----------------",
+    "~ ~ ~ ~ ~ ~ ~ ~ ", "+-+-+-+-+-+-+-+ ", "::::::::::::::::",
+    ">>> >>> >>> >>> ", " #### #### #### ", "!!! !!! !!! !!! ",
+};
+
+// -- HELPER FUNCTIONS -- //
+
+void addToLCDBuffer(String str) {
+  if (str == "\f")
+    lcdBuffer += "                ";  // Clear 1 line from cursor
+  else if (str == "\0")
+    lcdBuffer +=
+        "                                 ";  // Clear 2 lines from cursor
+  else
+    lcdBuffer += str;
+}
+
+int mapThreshold(int val, int threshold) {
+  return map(val - min(val, threshold), 0, 255 - threshold, 0, 255);
+}
+
+int mapLimits(int val, int min, int max) { return map(val, 0, 255, min, max); }
+
+bool buttonBuffer = false;
+bool buttonPressed = false;
+
+bool button() {
+  if (!digitalRead(pinSW) && !buttonBuffer) {
+    buttonBuffer = true;
+    buttonPressed = true;
+    return;
+  }
+
+  if (digitalRead(pinSW) && buttonBuffer) {
+    buttonBuffer = false;
+  }
+  buttonPressed = false;
+}
+
+// -- STARTUP -- //
+
 void setup() {
   // LCD setup
   lcd.init();
-  lcd.setCursor(0, 0);
-  lcd.send_string("      Juky      ");
-  lcd.setCursor(0, 1);
-  lcd.send_string("   Starting...  ");
-
-  // Safety delay to give it some time.
-  // (and to have a loading screen which looks cool)
-  delay(500);
 
   // Adressable LED setup
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
-
-  // LED setup
-  pinMode(LED_red, OUTPUT);
-  pinMode(LED_green, OUTPUT);
-  pinMode(LED_blue, OUTPUT);
-  digitalWrite(LED_red, HIGH);
-  digitalWrite(LED_green, HIGH);
-  digitalWrite(LED_blue, HIGH);
-
-  // LCD clear
-  lcd.setCursor(0, 0);
-  lcd.send_string("      Juky      ");
-  lcd.setCursor(0, 1);
-  lcd.send_string("  Made with <3 ");
-
-  delay(500);
+  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS)
+      .setCorrection(TypicalLEDStrip);
+  FastLED.clear();
+  FastLED.show();
 
   // Rotary Encoder setup
   Timer1.initialize(1000);
   Timer1.attachInterrupt(timer_service);
 
-  //MSGEQ7 setup
+  // MSGEQ7 setup
   MSGEQ7.begin();
 
-  // Serial setup
-  Serial.begin(9600);
+  // Nice looking fake loading screen
+  lcd.setRGB(255, 0, 128);
+  lcd.setCursor(0, 0);
+  lcd.send_string("   -< Juky >-   ");
+  lcd.setCursor(0, 1);
+  lcd.send_string("Audio Visualizer");
+
+  delay(500);
+
+  lcd.setCursor(0, 0);
+  lcd.send_string("Made by Samy  <3");
+  lcd.setCursor(0, 1);
+  lcd.send_string("https://zohiu.de");
+
+  delay(1000);
+
+  addToLCDBuffer("\r");
+  addToLCDBuffer("\0");
 }
 
-// ------------------------------------------------------------------------------------------ //
+// -- SETTINGS -- //
 
-// Effect settings
-String allColorModes[7] = {"rgb", "r", "g", "b", "random", "rainbow-h", "rainbow-v"};
+struct Settings {
+  // Audio detection
+  byte silenceThreshold = 40;
+  float sensitivity = 1.0;
 
-float effectSensitivity = 1;
-int effectBrightness = 255;
-int effectColorMode = 5;
-bool effectSoundReactive = true;
+  // Display
+  bool reactiveBrightness = true;
+  byte idleBrightness = 10;
+  byte maxBrightness = 180;
 
-// LCD settings
-String LCDIdleText1 = "      Juky      ";
-String LCDIdleText2 = "                ";
-int LCDIdleTime = 5;
+  // Colors
+  byte saturation = 175;
+  byte hsvOffset = 200;
+  float hsvScale = 0.3;
+  float hsvSpeed = 0.1;
+  float rotation = 0.7;
+  float randomization = 0.0;
+};
 
-// LED settings
-int LEDMinDelay = 50;
-int LEDMaxDelay = 250;
-int LEDIdleDelay = 1000;
+Settings settings;
 
-int LEDSensitivity = 15;
+enum SettingType { BOOL, FLOAT, BYTE, PERCENTAGE };
 
-// ------------------------------------------------------------------------------------------ //
+struct Setting {
+  void* pointer;
+  String name;
+  SettingType type;
+};
 
-// Vars for the Menu
-int menuPage = 0;
-int menuPageAmount = 1;
-int menuItem = 0;
-int menuEdit = false;
+class Page {
+ public:
+  virtual String getTitle() { return title; }
+  virtual Setting* getMembers() { return members; }
+  virtual int getMembersSize() { return membersSize; }
 
-int idleBuffer = 0;
-int millisBuffer = 0;
+ protected:
+  String title = "";
+  Setting* members;
+  int membersSize;
+};
 
-int encoder_countbefore = 0;
-bool buttonBuffer = false;
-bool buttonEvent = false;
-
-// Menu for the LCD screen, executed every loop
-void Menu_loop() {
-  // Button management
-  if (digitalRead(pinSW) == 0 && buttonBuffer == 1) {
-    Serial.println(idleBuffer);
-    // button even if display enabled
-    if (idleBuffer > 0) {
-      buttonEvent = true;
-      // enable display if disabled
-    } else if (idleBuffer < 0) {
-      buttonEvent = true;
-      menuItem = 0;
-      menuPage = 0;
-      menuEdit = false;
-    }
-
-    buttonBuffer = 0;
-
-    // Only change numbers when the display was already on
-    if (idleBuffer > 0) {
-      // Main page click, send to second page
-      if (menuItem == 0) {
-        menuItem = 1;
-      } else if (menuItem == 1) {
-        menuItem = 0;
-
-        // Second page click, enter / exit edit mode
-      } else if (menuEdit == false) {
-        menuEdit = true;
-      } else if (menuEdit == true) {
-        menuEdit = false;
-      }
-    } else {
-      menuItem = 0;
-      menuPage = 0;
-      menuEdit = false;
-    }
-
-  } else if (digitalRead(pinSW) == 1) {
-    buttonBuffer = 1;
+class AudioPage : public Page {
+ public:
+  AudioPage() {
+    title = "Audio";
+    membersSize = 2;
+    members = new Setting[membersSize]{
+        {&settings.silenceThreshold, "Audio threshold", BYTE},
+        {&settings.sensitivity, "Sensitivity", FLOAT}};
   }
+  ~AudioPage() { delete[] members; }
+};
 
-  // Moving through menu
-  int encoder_change = encoder.get_change();
-  if (encoder_countbefore != encoder.get_count() || buttonEvent) {
-    if (idleBuffer < 0) {
-      lcd.setCursor(0, 0);
-      lcd.send_string("      Juky      ");
-      lcd.setCursor(0, 1);
-      lcd.send_string("      ....      ");
-      idleBuffer = LCDIdleTime;
-      menuItem = 0;
-      menuPage = -1;
-      menuEdit = false;
-      if (buttonEvent) {
-        encoder_countbefore = encoder.get_count() - 1;
-      }
-    } else {
-
-      idleBuffer = LCDIdleTime;
-
-      int now = (encoder_countbefore - encoder.get_count()) * -1;
-      encoder_countbefore = encoder.get_count();
-
-      if (menuItem == 0) {
-        menuPage += now;
-        if (menuPage > menuPageAmount) {
-          menuPage = 0;
-        } else if (menuPage < 0) {
-          menuPage = menuPageAmount;
-        }
-      } else if (buttonEvent == false) {
-        if (menuEdit == false) {
-          menuItem += now;
-          if (menuItem > 5) {
-            menuItem = 1;
-          } else if (menuItem < 1) {
-            menuItem = 5;
-          }
-        }
-      }
-
-      // If it's item 1, always show the back button!
-      if (menuItem == 1) {
-        lcd.setCursor(0, 0);
-        lcd.send_string("Back            ");
-        lcd.setCursor(0, 1);
-        lcd.send_string("                ");
-
-        // Else, check for page
-
-        // EFFECT SETTINGS
-      } else if (menuPage == 0) {
-        if (menuItem == 0) {
-          lcd.setCursor(0, 0);
-          lcd.send_string("Effect Settings");
-          lcd.setCursor(0, 1);
-          lcd.send_string("<              >");
-
-          // SENSITIVITY
-        } else if (menuItem == 2) {
-          if (menuEdit == true) {
-            effectSensitivity += now * 0.05;
-            if (effectSensitivity <= 0) {
-              effectSensitivity = 0;
-            }
-            lcd.setCursor(0, 1);
-            lcd.send_string((String("* ") + String(effectSensitivity) + String("                ")).c_str());
-          } else {
-            lcd.setCursor(0, 0);
-            lcd.send_string("Sensitivity     ");
-            lcd.setCursor(0, 1);
-            lcd.send_string((String(effectSensitivity) + String("                ")).c_str());
-          }
-
-          // BRIGHTNESS
-        } else if (menuItem == 3) {
-          if (menuEdit == true) {
-            effectBrightness += now;
-            if (effectBrightness <= 0) {
-              effectBrightness = 0;
-            } else if (effectBrightness >= 255) {
-              effectBrightness = 255;
-            }
-            lcd.setCursor(0, 1);
-            lcd.send_string((String("* ") + String(effectBrightness) + String("                ")).c_str());
-          } else {
-            lcd.setCursor(0, 0);
-            lcd.send_string("Brightness      ");
-            lcd.setCursor(0, 1);
-            lcd.send_string((String(effectBrightness) + String("                ")).c_str());
-          }
-
-          // COLOR MODE
-        } else if (menuItem == 4) {
-          if (menuEdit == true) {
-            if (now != 0) {
-              effectColorMode += now;
-              if (effectColorMode < 0) {
-                effectColorMode = sizeof(allColorModes) / sizeof(String) - 1;
-              } else if (effectColorMode >= sizeof(allColorModes) / sizeof(String)) {
-                effectColorMode = 0;
-              }
-            }
-            lcd.setCursor(0, 1);
-            lcd.send_string((String("* ") + String(allColorModes[effectColorMode]) + String("                ")).c_str());
-          } else {
-            lcd.setCursor(0, 0);
-            lcd.send_string("Color Mode      ");
-            lcd.setCursor(0, 1);
-            lcd.send_string((String(allColorModes[effectColorMode]) + String("                ")).c_str());
-          }
-          // SOUND REACTIVE
-        } else if (menuItem == 5) {
-          if (menuEdit == true) {
-            if (now != 0) {
-              effectSoundReactive = !effectSoundReactive;
-            }
-            lcd.setCursor(0, 1);
-            if (effectSoundReactive == true) {
-              lcd.send_string((String("* Yes") + String("                ")).c_str());
-            } else {
-              lcd.send_string((String("* No") + String("                ")).c_str());
-            }
-          } else {
-            lcd.setCursor(0, 0);
-            lcd.send_string("Sound Reactive  ");
-            lcd.setCursor(0, 1);
-            if (effectSoundReactive == true) {
-              lcd.send_string((String("Yes") + String("                ")).c_str());
-            } else {
-              lcd.send_string((String("No") + String("                ")).c_str());
-            }
-          }
-        }
-      } else if (menuPage == 1) {
-        if (menuItem == 0) {
-          lcd.setCursor(0, 0);
-          lcd.send_string("Info            ");
-          lcd.setCursor(0, 1);
-          lcd.send_string("<              >");
-        } else if (menuItem == 2) {
-          lcd.setCursor(0, 0);
-          lcd.send_string("Chip            ");
-          lcd.setCursor(0, 1);
-          lcd.send_string("Arduino Uno     ");
-        } else if (menuItem == 3) {
-          lcd.setCursor(0, 0);
-          lcd.send_string("Version         ");
-          lcd.setCursor(0, 1);
-          lcd.send_string(String(version + "                ").c_str());
-        } else if (menuItem == 4) {
-          lcd.setCursor(0, 0);
-          lcd.send_string("Year            ");
-          lcd.setCursor(0, 1);
-          lcd.send_string("2021/22         ");
-        }
-      }
-      buttonEvent = false;
-    }
+class DisplayPage : public Page {
+ public:
+  DisplayPage() {
+    title = "Display";
+    membersSize = 3;
+    members = new Setting[membersSize]{
+        {&settings.reactiveBrightness, "React brightness", BOOL},
+        {&settings.maxBrightness, "Max brightness", BYTE},
+        {&settings.idleBrightness, "Idle brightness", BYTE}};
   }
+  ~DisplayPage() { delete[] members; }
+};
 
-  // Idle delay, show idle message
-  if (millis() % 1000 <= 50 && menuEdit == false) {
-    if (idleBuffer > 0) {
-      idleBuffer -= 1;
-    }
-    if (idleBuffer == 0) {
-      idleBuffer = -1;
-      lcd.setCursor(0, 0);
-      lcd.send_string(LCDIdleText1.c_str());
-      lcd.setCursor(0, 1);
-      lcd.send_string(LCDIdleText2.c_str());
-    }
+class ColorsPage : public Page {
+ public:
+  ColorsPage() {
+    title = "Colors";
+    membersSize = 6;
+    members = new Setting[membersSize]{
+        {&settings.saturation, "Saturation", BYTE},
+        {&settings.hsvOffset, "HSV offset", BYTE},
+        {&settings.hsvScale, "HSV scale", FLOAT},
+        {&settings.hsvSpeed, "HSV speed", FLOAT},
+        {&settings.rotation, "Rotation", PERCENTAGE},
+        {&settings.randomization, "Randomization", PERCENTAGE}};
   }
+  ~ColorsPage() { delete[] members; }
+};
+
+bool settingsOpen = false;
+bool pageOpen = false;
+bool changingValue = false;
+bool forceShow = false;
+int currentPage = 0;
+int currentSetting = 0;
+unsigned long lastInput;
+
+Page* pages[] = {new ColorsPage(), new DisplayPage(), new AudioPage()};
+int pagesSize = sizeof(pages) / sizeof(pages[0]);
+
+void openSettings() {
+  settingsOpen = true;
+  pageOpen = false;
+  currentPage = 0;
+  lcdBuffer = "";
+  lcd.setRGB(255, 0, 128);
+  addToLCDBuffer(String("\r"));
+  addToLCDBuffer(String("Settings        "));
+  addToLCDBuffer("\b");
+  addToLCDBuffer("\f");
+  addToLCDBuffer("\b");
+  addToLCDBuffer(pages[0]->getTitle());
+  encoder.reset();
+  lastInput = millis();
 }
 
-// ------------------------------------------------------------------------------------------ //
+void updateSettings() {
+  if (millis() - lastInput > 10000 && !changingValue) {
+    settingsOpen = false;
+    return;
+  }
 
-// Vars needed for audio stuff
-int visVal[5];
-bool newReading;
-uint8_t led_value;
-uint8_t brightness;
+  int change = encoder.get_change();
+  if (change == 0 && !buttonPressed && !forceShow) return;
+  lastInput = millis();
 
-// Loop function, loops constantly, calls all other loops
-void loop()
-{
-  // MSGEQ7 read
-  newReading = MSGEQ7.read(MSGEQ7_INTERVAL);
-  led_value = (MSGEQ7.get(MSGEQ7_BASS) + MSGEQ7.get(MSGEQ7_1) + MSGEQ7.get(MSGEQ7_2) / 3) * 0.1 * MSGEQ7.getVolume() * 100;
+  if (!pageOpen) {
+    if (buttonPressed) {
+      pageOpen = true;
+      currentSetting = 0;
+      buttonPressed = false;
+      forceShow = true;
+      return;
+    }
 
-  // The 245 needs to stay, trust me!
-  visVal[5] = map(MSGEQ7.get(MSGEQ7_0) * effectSensitivity, 0, 245, 0, grid_y);
-  visVal[4] = map(MSGEQ7.get(MSGEQ7_1) * effectSensitivity, 0, 245, 0, grid_y);
-  visVal[3] = map(MSGEQ7.get(MSGEQ7_2) * effectSensitivity, 0, 245, 0, grid_y);
-  visVal[2] = map(MSGEQ7.get(MSGEQ7_3) * effectSensitivity, 0, 245, 0, grid_y);
-  visVal[1] = map(MSGEQ7.get(MSGEQ7_4) * effectSensitivity, 0, 245, 0, grid_y);
-  visVal[0] = map((MSGEQ7.get(MSGEQ7_5) + MSGEQ7.get(MSGEQ7_6)) / 2 * effectSensitivity, 0, 245, 0, grid_y);
+    // Page selector
+    if (currentPage == max(0, min(currentPage + change, pagesSize - 1)) &&
+        !forceShow)
+      return;
+    currentPage = max(0, min(currentPage + change, pagesSize - 1));
+    lcdBuffer = "";
+    addToLCDBuffer("\b");
+    addToLCDBuffer(pages[currentPage]->getTitle());
+    addToLCDBuffer("\f");
+    addToLCDBuffer(String("\r"));
+    addToLCDBuffer(String("Settings        "));
+    forceShow = false;
+    return;
+  }
 
+  if (buttonPressed) {
+    changingValue = !changingValue;
+    buttonPressed = false;
+    forceShow = true;
+    encoder.reset();
+  }
+
+  // Setting selector
+  if (!changingValue) {
+    if (currentSetting ==
+            max(-1, min(currentSetting + change,
+                        pages[currentPage]->getMembersSize() - 1)) &&
+        !forceShow)
+      return;
+    currentSetting = max(-1, min(currentSetting + change,
+                                 pages[currentPage]->getMembersSize() - 1));
+  }
+
+  lcdBuffer = "";
+
+  // Back button is page -1
+  if (currentSetting == -1) {
+    if (changingValue) {  // Changing value = button press
+      pageOpen = false;
+      forceShow = true;
+      currentSetting = 0;
+      changingValue = false;
+      return;
+    }
+    addToLCDBuffer("\r");
+    addToLCDBuffer("\f");
+    addToLCDBuffer("\b");
+    addToLCDBuffer("Back");
+    addToLCDBuffer("\f");
+    return;
+  }
+
+  if (!changingValue) {
+    addToLCDBuffer("\r");
+    addToLCDBuffer(pages[currentPage]->getMembers()[currentSetting].name);
+    addToLCDBuffer("\f");
+  }
+
+  addToLCDBuffer("\b");
+  if (changingValue) addToLCDBuffer("> ");
+  // Types
+  switch (pages[currentPage]->getMembers()[currentSetting].type) {
+    case BOOL: {
+      bool* value = pages[currentPage]->getMembers()[currentSetting].pointer;
+      if (changingValue && change != 0) *value = !*value;
+      *value ? addToLCDBuffer("Yes") : addToLCDBuffer("No");
+      break;
+    }
+    case FLOAT: {
+      float* value = pages[currentPage]->getMembers()[currentSetting].pointer;
+      if (changingValue) *value += change * 0.05;
+      addToLCDBuffer(String(*value));
+      break;
+    }
+    case BYTE: {
+      byte* value = pages[currentPage]->getMembers()[currentSetting].pointer;
+      if (changingValue) *value += change * 5;
+      addToLCDBuffer(String(*value));
+      break;
+    }
+    case PERCENTAGE: {
+      float* value = pages[currentPage]->getMembers()[currentSetting].pointer;
+      if (changingValue) *value = max(0.0, min(*value + change * 0.05, 1.0));
+      addToLCDBuffer(String((int)(*value * 100)));
+      addToLCDBuffer("%");
+      break;
+    }
+  }
+  if (changingValue) addToLCDBuffer(" <");
+  addToLCDBuffer("\f");
+  forceShow = false;
+}
+
+// -- MAIN LOOP -- //
+
+void loop() {
+  unsigned long timeBeforeExecution = millis();
+
+  // If new values are available
+  if (MSGEQ7.read(MSGEQ7_INTERVAL)) {
+    updateDisplay();
+  }
+
+  button();
+
+  if (buttonPressed && !settingsOpen) {
+    buttonPressed = false;
+    openSettings();
+  }
+
+  settingsOpen ? updateSettings() : updateLCD();
+
+  tickLCD();
+
+  delay(targetMillis -
+        min(targetMillis, millis() - min(millis(), timeBeforeExecution)));
+}
+
+// -- DISPLAY FUNCTIONS -- //
+
+float calculateHue(byte x, byte y) {
+  return settings.hsvOffset +
+         map(((settings.rotation + (5 * settings.randomization)) * x) +
+                 ((1 - (settings.rotation + (5 * settings.randomization))) * y),
+             0,
+             (settings.rotation * grid_x) + ((1 - settings.rotation) * grid_y),
+             0, 255) *
+             settings.hsvScale +
+         (settings.hsvSpeed * millis() / 10);
+}
+
+byte calculateBrightness() {
+  if (settings.reactiveBrightness) {
+    return mapLimits(
+        mapThreshold(MSGEQ7.getVolume(), settings.silenceThreshold),
+        settings.idleBrightness, settings.maxBrightness);
+  } else
+    return settings.maxBrightness;
+}
+
+void updateDisplay() {
+  FastLED.clear();
   for (int x = 0; x < grid_x; x++) {
-    if (visVal[x] < 0) {
-      visVal[x] = 0;
-    }
-  }
-
-  // Bars effect loop call
-  Eff_Bars_loop();
-
-  // Menu loop - Interactions call
-  Menu_loop();
-
-  // LCD effect loop call
-  Eff_LCD_loop();
-
-  // ms delay after every loop
-  delay(50);
-}
-
-// ------------------------------------------------------------------------------------------ //
-
-// Vars for the LCD effect
-int count = 1;
-
-int prevmillis = 0;
-int currentmillis = 0;
-int millisdelay = 1000;
-
-// LCD effect loop function, executed every loop
-void Eff_LCD_loop() {
-  // Brightness and speed of the LEDs
-  if (effectSoundReactive == true) {
-    led_value = led_value * LEDSensitivity;
-    brightness = map(MSGEQ7.getVolume() * 1.5, 0, 255, 0, effectBrightness);
-  } else {
-    led_value = 0;
-    brightness = effectBrightness;
-  }
-
-  millisdelay = map(led_value, 0, 128, LEDMaxDelay, LEDMinDelay);
-
-  if (led_value < 25) {
-    millisdelay = LEDIdleDelay;
-    led_value = 50;
-  }
-
-  if (allColorModes[effectColorMode] == "r") {
-    lcd.setRGB(brightness, 0, 0);
-    analogWrite(LED_red, brightness);
-    digitalWrite(LED_green, HIGH);
-    digitalWrite(LED_blue, HIGH);
-    current_color = CRGB(brightness, 0, 0);
-  } else if (allColorModes[effectColorMode] == "g") {
-    lcd.setRGB(0, brightness, 0);
-    digitalWrite(LED_red, HIGH);
-    analogWrite(LED_green, brightness);
-    digitalWrite(LED_blue, HIGH);
-    current_color = CRGB(0, brightness, 0);
-  } else if (allColorModes[effectColorMode] == "b") {
-    lcd.setRGB(0, brightness, brightness);
-    digitalWrite(LED_red, HIGH);
-    digitalWrite(LED_green, HIGH);
-    analogWrite(LED_blue, brightness);
-    current_color = CRGB(0, 0, brightness);
-  } else if (allColorModes[effectColorMode] == "random") {
-    lcd.setRGB(random(0, brightness), random(0, brightness), random(0, brightness));
-    analogWrite(LED_red, random(0, brightness));
-    analogWrite(LED_green, random(0, brightness));
-    analogWrite(LED_blue, random(0, brightness));
-    current_color = CRGB(random(0, brightness), random(0, brightness), random(0, brightness));
-  } else {
-    // Speed control of the LEDS
-    currentmillis = millis();
-
-    if (currentmillis - prevmillis > millisdelay) {
-      prevmillis = currentmillis;
-      count += 1;
-      if (count >= 4)
-        count = 1;
-      MSGEQ7.reset();
-    }
-
-    // Set the colors
-    if (count == 1) {
-      lcd.setRGB(brightness, 0, 0);
-      analogWrite(LED_red, brightness);
-      digitalWrite(LED_green, HIGH);
-      digitalWrite(LED_blue, HIGH);
-      current_color = CRGB(brightness, 0, 0);
-    } else if (count == 2) {
-      lcd.setRGB(0, brightness, 0);
-      digitalWrite(LED_red, HIGH);
-      analogWrite(LED_green, brightness);
-      digitalWrite(LED_blue, HIGH);
-      current_color = CRGB(0, brightness, 0);
-    } else if (count == 3) {
-      lcd.setRGB(0, brightness, brightness);
-      digitalWrite(LED_red, HIGH);
-      digitalWrite(LED_green, HIGH);
-      analogWrite(LED_blue, brightness);
-      current_color = CRGB(0, 0, brightness);
-    }
-  }
-}
-
-// ------------------------------------------------------------------------------------------ //
-
-// Debug loop, shows the order of LEDs, useful for debug.
-void Eff_Debug_loop() {
-  for (int i = 0; i < NUM_LEDS; i++) {
-    int v = i * 3 + 10;
-    if (i <= 17) {
-      leds[i] = CRGB(v, v, v);
-    } else if (i <= 29) {
-      leds[i] = CRGB(0, 0, v);
-    } else if (i <= 41) {
-      leds[i] = CRGB(0, v, 0);
-    } else {
-      leds[i] = CRGB(v, 0, 0);
+    for (byte y = mapLimits(
+             mapThreshold(
+                 min(255, MSGEQ7.get(grid_x - x - 1) * settings.sensitivity + 15),
+                 settings.silenceThreshold),
+             0, grid_y);
+         y > 0; y--) {
+      leds[x + ((y - 1) * grid_x)] =
+          CHSV(calculateHue(x, y), settings.saturation, calculateBrightness());
     }
   }
   FastLED.show();
 }
 
-// ------------------------------------------------------------------------------------------ //
+// -- LCD FUNCTIONS -- //
 
-// Bars effect loop function, executed every loop
-void Eff_Bars_loop() {
-  for (int x = 0; x < grid_x; x++) {
-    for (int y = 0; y < grid_y; y++) {
-      if (y < visVal[x]) {
-        if (allColorModes[effectColorMode] == "rainbow-h") {
-          CRGB rainbow[grid_x] = {CRGB(brightness / 2, 0, brightness), CRGB(0, 0, brightness), CRGB(0, brightness, brightness / 2),
-                                  CRGB(0, brightness, 0), CRGB(brightness, brightness, 0), CRGB(brightness, 0, 0)
-                                 };
-          leds[x + (y * grid_x)] = rainbow[x];
-        } else if (allColorModes[effectColorMode] == "rainbow-v") {
-          CRGB rainbow[grid_y] = {CRGB(brightness, 0, 0), CRGB(brightness, brightness / 2, 0), CRGB(brightness, brightness, 0),
-                                  CRGB(0, brightness, 0), CRGB(0, brightness, brightness / 4), CRGB(0, brightness, brightness / 2),
-                                  CRGB(0, brightness, brightness), CRGB(0, 0, brightness), CRGB(brightness / 2, 0, brightness),
-                                  CRGB(brightness, 0, brightness)
-                                 };
-          leds[x + (y * grid_x)] = rainbow[y];
-        } else {
-          leds[x + (y * grid_x)] = current_color;
-        }
-      } else {
-        leds[x + (y * grid_x)] = CRGB(0, 0, 0);
-      }
-    }
+void updateLCD() {
+  // Takes the closest display color
+  CRGB lcdColor =
+      hsv2rgb_spectrum(CHSV(calculateHue(1, 0), 255, calculateBrightness()));
+  lcd.setRGB(lcdColor.r, lcdColor.g, lcdColor.b);
+  if (lcdBuffer.length() == 0) {
+    addToLCDBuffer("\r");
+    addToLCDBuffer(lines[random(0, 9)]);
+    addToLCDBuffer("\r");
+    addToLCDBuffer("\f");
+    addToLCDBuffer("\b");
+    addToLCDBuffer(lines[random(0, 9)]);
+    addToLCDBuffer("\b");
+    addToLCDBuffer("\f");
   }
-  FastLED.show();
+}
+
+void tickLCD() {
+  if (lcdBuffer.length() == 0) return;
+  String substring = lcdBuffer.substring(0, 1);
+  lcdBuffer.remove(0, 1);
+
+  if (substring == "\r") {
+    cursor = 0;
+    return;
+  } else if (substring == "\b") {
+    cursor = 17;
+    return;
+  }
+
+  cursor <= 16 ? lcd.setCursor(cursor, 0) : lcd.setCursor(cursor - 17, 1);
+  lcd.send_string(substring.c_str());
+
+  cursor++;
 }
